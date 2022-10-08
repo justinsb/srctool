@@ -62,7 +62,11 @@ func (r *Repo) FindRemoteTargetForPullRequests(ctx context.Context) (*Remote, er
 	key := "gitflow.upstream.remote"
 	remote, err := config.LookupString(key)
 	if err != nil {
-		return nil, fmt.Errorf("error looking up config value %q: %w", key, err)
+		if git.IsErrorCode(err, git.ErrorCodeNotFound) {
+			remote = ""
+		} else {
+			return nil, fmt.Errorf("error looking up config value %q: %w", key, err)
+		}
 	}
 	if remote != "" {
 		return r.GetRemote(ctx, remote)
@@ -135,9 +139,14 @@ func collect[T any, V any](items []T, mapper func(t T) V) []V {
 	}
 	return values
 }
+
 func (r *Repo) Fetch(ctx context.Context, remote *Remote) error {
-	_, err := r.ExecGit(ctx, "fetch", remote.Name)
+	result, err := r.ExecGit(ctx, "fetch", remote.Name)
 	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+
 		return err
 	}
 	return nil
