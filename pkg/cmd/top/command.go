@@ -2,6 +2,7 @@ package top
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -11,13 +12,27 @@ import (
 
 func AddCommand(ctx context.Context, parent *cobra.Command) {
 	cmd := &cobra.Command{
-		Use: "top",
+		Use:   "top",
+		Short: "shows the most recently changed branches",
 	}
 	var opt Options
 	opt.InitDefaults()
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return Run(cmd.Context(), opt)
 	}
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			n, err := strconv.Atoi(args[0])
+			if err != nil {
+				cmd.Usage()
+				cmd.PrintErrln()
+				return fmt.Errorf("expected [N]")
+			}
+			opt.N = n
+		}
+		return nil
+	}
+	cmd.Flags().IntVar(&opt.N, "n", opt.N, "max number of branches to show")
 	parent.AddCommand(cmd)
 }
 
