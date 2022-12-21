@@ -54,7 +54,7 @@ func (r *Repo) GetRemote(ctx context.Context, remoteName string) (*Remote, error
 	}, nil
 }
 
-func (r *Repo) FindRemoteTargetForPullRequests(ctx context.Context) (*Remote, error) {
+func (r *Repo) FindUpstreamRemoteForPullRequests(ctx context.Context) (*Remote, error) {
 	config, err := r.gitRepo.Config()
 	if err != nil {
 		return nil, fmt.Errorf("error getting repo config: %w", err)
@@ -87,18 +87,122 @@ func (r *Repo) FindRemoteTargetForPullRequests(ctx context.Context) (*Remote, er
 	}
 
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("cannot determine any target remote for pull requests")
+		return nil, fmt.Errorf("cannot determine any upstream remote for pull requests")
 	}
 	if len(candidates) == 1 {
 		return candidates[0], nil
 	}
 
 	names := collect(candidates, func(b *Remote) string { return b.Name })
-	return nil, fmt.Errorf("cannot determine unique target remote for pull requests, consider setting %q (candidates: %v)", key, strings.Join(names, ","))
+	return nil, fmt.Errorf("cannot determine unique upstream remote for pull requests, consider setting %q (candidates: %v)", key, strings.Join(names, ","))
+}
+
+func (r *Repo) FindForkRemoteForPullRequests(ctx context.Context) (*Remote, error) {
+	config, err := r.gitRepo.Config()
+	if err != nil {
+		return nil, fmt.Errorf("error getting repo config: %w", err)
+	}
+	key := "gitflow.fork.remote"
+	remote, err := config.LookupString(key)
+	if err != nil {
+		if git.IsErrorCode(err, git.ErrorCodeNotFound) {
+			remote = ""
+		} else {
+			return nil, fmt.Errorf("error looking up config value %q: %w", key, err)
+		}
+	}
+	if remote != "" {
+		return r.GetRemote(ctx, remote)
+	}
+
+	remoteNames, err := r.gitRepo.Remotes.List()
+	if err != nil {
+		return nil, fmt.Errorf("error listing remotes: %w", err)
+	}
+
+	var candidates []*Remote
+	for _, remoteName := range remoteNames {
+		remote, err := r.GetRemote(ctx, remoteName)
+		if err != nil {
+			return nil, err
+		}
+		// TODO: Match os.Getenv("USER")?  Match "fork"?
+		candidates = append(candidates, remote)
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("cannot determine any fork remote for pull requests")
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+
+	names := collect(candidates, func(b *Remote) string { return b.Name })
+	return nil, fmt.Errorf("cannot determine unique fork remote for pull requests, consider setting %q (candidates: %v)", key, strings.Join(names, ","))
+}
+
+func (r *Repo) CurrentBranch(ctx context.Context) (*Branch, error) {
+	result, err := r.ExecGit(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(result.Stdout)
+	if name == "" {
+		return nil, fmt.Errorf("cannot find current branch (stdout was %q, stderr was %q)", result.Stdout, result.Stderr)
+	}
+	return &Branch{Name: name, ShortName: name}, nil
+}
+
+// TODO: Maybe put this on a workdir object?
+func (r *Repo) CheckoutNewBranch(ctx context.Context, newBranchName string, fromBranch *Branch) (*Branch, error) {
+	_, err := r.ExecGit(ctx, "checkout", "-b", newBranchName, fromBranch.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &Branch{Name: newBranchName, ShortName: newBranchName}, nil
+}
+
+// TODO: Maybe put this on a workdir object?
+func (r *Repo) Checkout(ctx context.Context, branch *Branch) error {
+	_, err := r.ExecGit(ctx, "checkout", branch.Name)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// TODO: Maybe put this on a workdir object?
+func (r *Repo) CherryPick(ctx context.Context, shas []string) error {
+	args := []string{"cherry-pick"}
+	args = append(args, shas...)
+	_, err := r.ExecGit(ctx, args...)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type PushOptions struct {
+	SetUpstream bool
+}
+
+// TODO: Maybe put this on a workdir object?
+func (r *Repo) Push(ctx context.Context, remote *Remote, opt PushOptions) error {
+	args := []string{"push"}
+	if opt.SetUpstream {
+		args = append(args, "--set-upstream")
+	}
+	args = append(args, remote.Name)
+
+	_, err := r.ExecGit(ctx, args...)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *Repo) FindUpstreamBranch(ctx context.Context) (*Branch, error) {
-	upstreamRemote, err := r.FindRemoteTargetForPullRequests(ctx)
+	upstreamRemote, err := r.FindUpstreamRemoteForPullRequests(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -138,18 +242,6 @@ func collect[T any, V any](items []T, mapper func(t T) V) []V {
 		values = append(values, v)
 	}
 	return values
-}
-
-func (r *Repo) Fetch(ctx context.Context, remote *Remote) error {
-	result, err := r.ExecGit(ctx, "fetch", remote.Name)
-	if err != nil {
-		if result.ExitCode != 0 {
-			result.PrintOutput()
-		}
-
-		return err
-	}
-	return nil
 }
 
 func (r *Repo) ExecGit(ctx context.Context, args ...string) (*ExecResult, error) {

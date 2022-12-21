@@ -34,16 +34,16 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	defer repo.Close()
 
-	upstream, err := repo.FindRemoteTargetForPullRequests(ctx)
+	upstreamRemote, err := repo.FindUpstreamRemoteForPullRequests(ctx)
 	if err != nil {
 		return err
 	}
 
-	if err := repo.Fetch(ctx, upstream); err != nil {
+	if err := upstreamRemote.Fetch(ctx); err != nil {
 		return err
 	}
 
-	allBranches, err := upstream.ListBranches(ctx)
+	allBranches, err := upstreamRemote.ListBranches(ctx)
 	if err != nil {
 		return err
 	}
