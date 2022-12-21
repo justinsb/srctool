@@ -43,7 +43,7 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 
-	if err := repo.Fetch(ctx, upstream.Remote); err != nil {
+	if err := upstream.Remote.Fetch(ctx); err != nil {
 		return err
 	}
 

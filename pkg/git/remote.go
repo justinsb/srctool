@@ -46,3 +46,16 @@ func (r *Remote) ListBranches(ctx context.Context) ([]*Branch, error) {
 
 	return branches, nil
 }
+
+func (r *Remote) Fetch(ctx context.Context) error {
+	repo := r.repo
+	result, err := repo.ExecGit(ctx, "fetch", r.Name)
+	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+
+		return err
+	}
+	return nil
+}
