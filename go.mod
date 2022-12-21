@@ -3,7 +3,7 @@ module github.com/justinsb/gitflow
 go 1.19
 
 require (
-	github.com/libgit2/git2go/v31 v31.7.9
+	github.com/libgit2/git2go/v34 v34.0.0
 	github.com/spf13/cobra v1.5.0
 	k8s.io/klog v1.0.0
 	k8s.io/klog/v2 v2.80.1

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	git "github.com/libgit2/git2go/v31"
+	git "github.com/libgit2/git2go/v34"
 )
 
 type Remote struct {
