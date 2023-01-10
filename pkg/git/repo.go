@@ -1,25 +1,22 @@
 package git
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 
-	git "github.com/libgit2/git2go/v34"
+	"k8s.io/klog/v2"
 )
 
 type Repo struct {
 	Dir string
 
-	gitRepo *git.Repository
+	config map[string]string
 }
 
 func (r *Repo) Close() error {
-	if r.gitRepo != nil {
-		r.gitRepo.Free()
-		r.gitRepo = nil
-	}
 	return nil
 }
 
@@ -31,58 +28,156 @@ func OpenRepo(ctx context.Context) (*Repo, error) {
 
 	// TODO: Find root?
 	p := cwd
-	flag := git.RepositoryOpenFlag(0) // Maybe RepositoryOpenNoSearch ?
-	ceiling := ""                     // TODO:??
-	repo, err := git.OpenRepositoryExtended(p, flag, ceiling)
+
+	r := &Repo{Dir: cwd}
+	// We list config as a quick check that this is a real git directory
+	config, err := r.ListConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open git repo %q: %w", p, err)
 	}
-	return &Repo{Dir: cwd, gitRepo: repo}, nil
+	return &Repo{Dir: cwd, config: config}, nil
 }
 
 func (r *Repo) GetRemote(ctx context.Context, remoteName string) (*Remote, error) {
-	info, err := r.gitRepo.Remotes.Lookup(remoteName)
+	remotes, err := r.ListRemotes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error looking up remote %q: %w", remoteName, err)
+		return nil, err
+	}
+	remote := remotes[remoteName]
+	if remote == nil {
+		return nil, fmt.Errorf("remote %q not found", remoteName)
+	}
+	return remote, nil
+}
+
+func (r *Repo) ListConfig(ctx context.Context) (map[string]string, error) {
+	if r.config != nil {
+		return r.config, nil
 	}
 
-	url := info.Url()
-	return &Remote{
-		repo: r,
-		Name: remoteName,
-		URL:  url,
-	}, nil
+	result, err := r.ExecGit(ctx, "config", "--list")
+	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+
+		return nil, err
+	}
+
+	config := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(result.Stdout))
+	for {
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return nil, fmt.Errorf("error parsing output: %w", err)
+			}
+			break
+		}
+
+		line := scanner.Text()
+		tokens := strings.SplitN(line, "=", 2)
+		if len(tokens) != 2 {
+			return nil, fmt.Errorf("error parsing line %q (expected 2 tokens)", line)
+		}
+
+		k := tokens[0]
+		v := tokens[1]
+		if config[k] != "" {
+			return nil, fmt.Errorf("found duplicate config key %q", k)
+		}
+		config[k] = v
+	}
+
+	r.config = config
+	return config, nil
+}
+
+func (r *Repo) SetConfig(ctx context.Context, k, v string) error {
+	result, err := r.ExecGit(ctx, "config", k, v)
+	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func (r *Repo) ListRemotes(ctx context.Context) (map[string]*Remote, error) {
+	result, err := r.ExecGit(ctx, "remote", "-v")
+	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+
+		return nil, err
+	}
+
+	remotes := make(map[string]*Remote)
+	scanner := bufio.NewScanner(strings.NewReader(result.Stdout))
+	for {
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return nil, fmt.Errorf("error parsing output: %w", err)
+			}
+			break
+		}
+
+		line := scanner.Text()
+		tokens := strings.Fields(line)
+		if len(tokens) != 3 {
+			return nil, fmt.Errorf("error parsing line %q (expected 3 tokens)", line)
+		}
+
+		name := tokens[0]
+		remote := remotes[name]
+		if remote == nil {
+			remote = &Remote{Name: name, repo: r}
+			remotes[name] = remote
+		}
+		switch tokens[2] {
+		case "(fetch)":
+			if remote.FetchURL != "" {
+				// TODO: This may be allowed by git
+				return nil, fmt.Errorf("found multiple fetch urls for remote %q", name)
+			}
+			remote.FetchURL = tokens[1]
+		case "(push)":
+			if remote.PushURL != "" {
+				// TODO: This may be allowed by git
+				return nil, fmt.Errorf("found multiple push urls for remote %q", name)
+			}
+			remote.PushURL = tokens[1]
+
+		default:
+			return nil, fmt.Errorf("error parsing line %q (expected push or fetch)", line)
+		}
+	}
+
+	return remotes, nil
 }
 
 func (r *Repo) FindUpstreamRemoteForPullRequests(ctx context.Context) (*Remote, error) {
-	config, err := r.gitRepo.Config()
+	config, err := r.ListConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting repo config: %w", err)
 	}
+
 	key := "gitflow.upstream.remote"
-	remote, err := config.LookupString(key)
-	if err != nil {
-		if git.IsErrorCode(err, git.ErrorCodeNotFound) {
-			remote = ""
-		} else {
-			return nil, fmt.Errorf("error looking up config value %q: %w", key, err)
-		}
-	}
+	remote := config[key]
 	if remote != "" {
 		return r.GetRemote(ctx, remote)
 	}
 
-	remoteNames, err := r.gitRepo.Remotes.List()
+	remotes, err := r.ListRemotes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error listing remotes: %w", err)
 	}
 
 	var candidates []*Remote
-	for _, remoteName := range remoteNames {
-		remote, err := r.GetRemote(ctx, remoteName)
-		if err != nil {
-			return nil, err
-		}
+	for _, remote := range remotes {
 		candidates = append(candidates, remote)
 	}
 
@@ -98,34 +193,23 @@ func (r *Repo) FindUpstreamRemoteForPullRequests(ctx context.Context) (*Remote, 
 }
 
 func (r *Repo) FindForkRemoteForPullRequests(ctx context.Context) (*Remote, error) {
-	config, err := r.gitRepo.Config()
+	config, err := r.ListConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting repo config: %w", err)
 	}
 	key := "gitflow.fork.remote"
-	remote, err := config.LookupString(key)
-	if err != nil {
-		if git.IsErrorCode(err, git.ErrorCodeNotFound) {
-			remote = ""
-		} else {
-			return nil, fmt.Errorf("error looking up config value %q: %w", key, err)
-		}
-	}
+	remote := config[key]
 	if remote != "" {
 		return r.GetRemote(ctx, remote)
 	}
 
-	remoteNames, err := r.gitRepo.Remotes.List()
+	remotes, err := r.ListRemotes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error listing remotes: %w", err)
 	}
 
 	var candidates []*Remote
-	for _, remoteName := range remoteNames {
-		remote, err := r.GetRemote(ctx, remoteName)
-		if err != nil {
-			return nil, err
-		}
+	for _, remote := range remotes {
 		// TODO: Match os.Getenv("USER")?  Match "fork"?
 		candidates = append(candidates, remote)
 	}
@@ -194,14 +278,18 @@ func (r *Repo) Push(ctx context.Context, remote *Remote, opt PushOptions) error 
 	}
 	args = append(args, remote.Name)
 
-	_, err := r.ExecGit(ctx, args...)
+	result, err := r.ExecGit(ctx, args...)
 	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
 		return err
 	}
 	return nil
 }
 
 func (r *Repo) FindUpstreamBranch(ctx context.Context) (*Branch, error) {
+	log := klog.FromContext(ctx)
 	upstreamRemote, err := r.FindUpstreamRemoteForPullRequests(ctx)
 	if err != nil {
 		return nil, err
@@ -226,6 +314,7 @@ func (r *Repo) FindUpstreamBranch(ctx context.Context) (*Branch, error) {
 	}
 
 	if len(candidates) == 0 {
+		log.Info("branches", "branches", branches)
 		return nil, fmt.Errorf("cannot determine (any) upstream branch")
 	}
 	if len(candidates) == 1 {
