@@ -13,7 +13,7 @@ import (
 type Repo struct {
 	Dir string
 
-	config map[string]string
+	config *Config
 }
 
 func (r *Repo) Close() error {
@@ -50,44 +50,15 @@ func (r *Repo) GetRemote(ctx context.Context, remoteName string) (*Remote, error
 	return remote, nil
 }
 
-func (r *Repo) ListConfig(ctx context.Context) (map[string]string, error) {
+func (r *Repo) ListConfig(ctx context.Context) (*Config, error) {
 	if r.config != nil {
 		return r.config, nil
 	}
 
-	result, err := r.ExecGit(ctx, "config", "--list")
+	config, err := ListConfig(ctx, r)
 	if err != nil {
-		if result.ExitCode != 0 {
-			result.PrintOutput()
-		}
-
 		return nil, err
 	}
-
-	config := make(map[string]string)
-	scanner := bufio.NewScanner(strings.NewReader(result.Stdout))
-	for {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return nil, fmt.Errorf("error parsing output: %w", err)
-			}
-			break
-		}
-
-		line := scanner.Text()
-		tokens := strings.SplitN(line, "=", 2)
-		if len(tokens) != 2 {
-			return nil, fmt.Errorf("error parsing line %q (expected 2 tokens)", line)
-		}
-
-		k := tokens[0]
-		v := tokens[1]
-		if config[k] != "" {
-			return nil, fmt.Errorf("found duplicate config key %q", k)
-		}
-		config[k] = v
-	}
-
 	r.config = config
 	return config, nil
 }
@@ -166,7 +137,7 @@ func (r *Repo) FindUpstreamRemoteForPullRequests(ctx context.Context) (*Remote, 
 	}
 
 	key := "gitflow.upstream.remote"
-	remote := config[key]
+	remote := config.Get(key)
 	if remote != "" {
 		return r.GetRemote(ctx, remote)
 	}
@@ -198,7 +169,7 @@ func (r *Repo) FindForkRemoteForPullRequests(ctx context.Context) (*Remote, erro
 		return nil, fmt.Errorf("error getting repo config: %w", err)
 	}
 	key := "gitflow.fork.remote"
-	remote := config[key]
+	remote := config.Get(key)
 	if remote != "" {
 		return r.GetRemote(ctx, remote)
 	}

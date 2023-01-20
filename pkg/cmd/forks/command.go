@@ -3,10 +3,12 @@ package forks
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"k8s.io/klog"
 
 	"github.com/justinsb/gitflow/pkg/git"
 )
@@ -31,6 +33,47 @@ func (o *Options) InitDefaults() {
 
 }
 
+type Repo interface {
+}
+
+type GithubRepo struct {
+	Organization string
+	Repository   string
+}
+
+func ParseRepoFromURL(ctx context.Context, s string) Repo {
+	if strings.HasPrefix(s, "https://github.com/") {
+		u, err := url.Parse(s)
+		if err != nil {
+			klog.Warningf("unable to parse url %q: %v", s, err)
+			return nil
+		}
+		pathTokens := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(pathTokens) == 2 {
+			return &GithubRepo{
+				Organization: pathTokens[0],
+				Repository:   pathTokens[1],
+			}
+		}
+	}
+
+	if strings.HasPrefix(s, "git@github.com:") {
+		s = strings.TrimPrefix(s, "git@github.com:")
+		s = strings.TrimSuffix(s, ".git")
+
+		tokens := strings.Split(strings.Trim(s, "/"), "/")
+		if len(tokens) == 2 {
+			return &GithubRepo{
+				Organization: tokens[0],
+				Repository:   tokens[1],
+			}
+		}
+	}
+
+	klog.Warningf("unknown repo %q", s)
+	return nil
+}
+
 func Run(ctx context.Context, opt Options) error {
 	repo, err := git.OpenRepo(ctx)
 	if err != nil {
@@ -49,22 +92,25 @@ func Run(ctx context.Context, opt Options) error {
 
 	githubUsername := os.Getenv("USER")
 
-	forkRemoteName := config["gitflow.fork.remote"]
+	forkRemoteName := config.Get("gitflow.fork.remote")
 	if forkRemoteName == "" {
-		forkPrefix := "https://github.com/" + githubUsername + "/"
 		var candidates []*git.Remote
 		for _, remote := range remotes {
-			if strings.HasPrefix(remote.FetchURL, forkPrefix) {
-				candidates = append(candidates, remote)
+			repo := ParseRepoFromURL(ctx, remote.FetchURL)
+			switch repo := repo.(type) {
+			case *GithubRepo:
+				if repo.Organization == githubUsername {
+					candidates = append(candidates, remote)
+				}
 			}
 		}
 
 		if len(candidates) == 0 {
 			// TODO: Call gh repo fork?
-			return fmt.Errorf("unable to find local fork (starting with %q)", forkPrefix)
+			return fmt.Errorf("unable to find local fork")
 		}
 		if len(candidates) > 1 {
-			return fmt.Errorf("found multiple local forks (starting with %q)", forkPrefix)
+			return fmt.Errorf("found multiple local forks")
 		}
 
 		forkRemote := candidates[0]
@@ -75,20 +121,47 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		forkRemoteName = forkRemote.Name
 
-		repoName := strings.TrimPrefix(forkRemote.FetchURL, forkPrefix)
-		pushURL := "git@github.com:" + githubUsername + "/" + repoName
-		if forkRemote.PushURL != pushURL {
-			if err := forkRemote.UpdateURLs(ctx, forkRemote.FetchURL, pushURL); err != nil {
-				return err
-			}
+		// Configure explicitly
+		if err := repo.SetConfig(ctx, "gitflow.fork.remote", forkRemoteName); err != nil {
+			return err
 		}
 
-		if err := repo.SetConfig(ctx, "gitflow.fork.remote", forkRemoteName); err != nil {
+		// Refresh remotes
+		remotes, err = repo.ListRemotes(ctx)
+		if err != nil {
 			return err
 		}
 	}
 
-	upstreamRemoteName := config["gitflow.upstream.remote"]
+	// Fix urls on remote fork, if github
+	forkRemote := remotes[forkRemoteName]
+	if forkRemote == nil {
+		return fmt.Errorf("remote fork %q not found", forkRemoteName)
+	} else {
+		repoInfo := ParseRepoFromURL(ctx, forkRemote.FetchURL)
+		pushURL := ""
+		fetchURL := ""
+
+		switch repoInfo := repoInfo.(type) {
+		case *GithubRepo:
+			if repoInfo.Organization == githubUsername {
+				pushURL = "git@github.com:" + repoInfo.Organization + "/" + repoInfo.Repository
+				fetchURL = "https://github.com/" + repoInfo.Organization + "/" + repoInfo.Repository
+			}
+		}
+
+		if pushURL != "" && fetchURL != "" {
+			if forkRemote.PushURL != pushURL || forkRemote.FetchURL != fetchURL {
+				if err := forkRemote.UpdateURLs(ctx, fetchURL, pushURL); err != nil {
+					return err
+				}
+			}
+		} else {
+			klog.Warningf("cannot determine correct urls for %q", forkRemote.FetchURL)
+		}
+	}
+
+	upstreamRemoteName := config.Get("gitflow.upstream.remote")
 	if upstreamRemoteName == "" {
 		expectedName := "upstream"
 
