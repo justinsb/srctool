@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
+	"github.com/justinsb/gitflow/pkg/cmd/cherry"
 	"github.com/justinsb/gitflow/pkg/cmd/forks"
 	"github.com/justinsb/gitflow/pkg/cmd/pr"
 	"github.com/justinsb/gitflow/pkg/cmd/prune"
@@ -42,6 +43,7 @@ func Run(ctx context.Context) error {
 	top.AddCommand(ctx, root)
 	pr.AddCommand(ctx, root)
 	forks.AddCommand(ctx, root)
+	cherry.AddCommand(ctx, root)
 
 	return root.ExecuteContext(ctx)
 }

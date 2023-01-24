@@ -3,9 +3,7 @@ package forks
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"k8s.io/klog"
@@ -33,47 +31,6 @@ func (o *Options) InitDefaults() {
 
 }
 
-type Repo interface {
-}
-
-type GithubRepo struct {
-	Organization string
-	Repository   string
-}
-
-func ParseRepoFromURL(ctx context.Context, s string) Repo {
-	if strings.HasPrefix(s, "https://github.com/") {
-		u, err := url.Parse(s)
-		if err != nil {
-			klog.Warningf("unable to parse url %q: %v", s, err)
-			return nil
-		}
-		pathTokens := strings.Split(strings.Trim(u.Path, "/"), "/")
-		if len(pathTokens) == 2 {
-			return &GithubRepo{
-				Organization: pathTokens[0],
-				Repository:   pathTokens[1],
-			}
-		}
-	}
-
-	if strings.HasPrefix(s, "git@github.com:") {
-		s = strings.TrimPrefix(s, "git@github.com:")
-		s = strings.TrimSuffix(s, ".git")
-
-		tokens := strings.Split(strings.Trim(s, "/"), "/")
-		if len(tokens) == 2 {
-			return &GithubRepo{
-				Organization: tokens[0],
-				Repository:   tokens[1],
-			}
-		}
-	}
-
-	klog.Warningf("unknown repo %q", s)
-	return nil
-}
-
 func Run(ctx context.Context, opt Options) error {
 	repo, err := git.OpenRepo(ctx)
 	if err != nil {
@@ -96,12 +53,14 @@ func Run(ctx context.Context, opt Options) error {
 	if forkRemoteName == "" {
 		var candidates []*git.Remote
 		for _, remote := range remotes {
-			repo := ParseRepoFromURL(ctx, remote.FetchURL)
+			repo := git.ParseRepoFromURL(ctx, remote.FetchURL)
 			switch repo := repo.(type) {
-			case *GithubRepo:
+			case *git.GithubForgeInfo:
 				if repo.Organization == githubUsername {
 					candidates = append(candidates, remote)
 				}
+			default:
+				klog.Warningf("unknown repo type %T", repo)
 			}
 		}
 
@@ -138,16 +97,18 @@ func Run(ctx context.Context, opt Options) error {
 	if forkRemote == nil {
 		return fmt.Errorf("remote fork %q not found", forkRemoteName)
 	} else {
-		repoInfo := ParseRepoFromURL(ctx, forkRemote.FetchURL)
+		repoInfo := git.ParseRepoFromURL(ctx, forkRemote.FetchURL)
 		pushURL := ""
 		fetchURL := ""
 
 		switch repoInfo := repoInfo.(type) {
-		case *GithubRepo:
+		case *git.GithubForgeInfo:
 			if repoInfo.Organization == githubUsername {
 				pushURL = "git@github.com:" + repoInfo.Organization + "/" + repoInfo.Repository
 				fetchURL = "https://github.com/" + repoInfo.Organization + "/" + repoInfo.Repository
 			}
+		default:
+			klog.Infof("unknown repo type %T", repoInfo)
 		}
 
 		if pushURL != "" && fetchURL != "" {
@@ -189,6 +150,34 @@ func Run(ctx context.Context, opt Options) error {
 
 		if err := repo.SetConfig(ctx, "gitflow.upstream.remote", upstreamRemoteName); err != nil {
 			return err
+		}
+	}
+
+	// Fix urls on upstream fork, if github
+	upstreamRemote := remotes[upstreamRemoteName]
+	if upstreamRemote == nil {
+		return fmt.Errorf("upstream remote %q not found", upstreamRemoteName)
+	} else {
+		repoInfo := git.ParseRepoFromURL(ctx, upstreamRemote.FetchURL)
+		pushURL := ""
+		fetchURL := ""
+
+		switch repoInfo := repoInfo.(type) {
+		case *git.GithubForgeInfo:
+			fetchURL = "https://github.com/" + repoInfo.Organization + "/" + repoInfo.Repository
+			pushURL = "nope"
+		default:
+			klog.Infof("unknown repo type %T", repoInfo)
+		}
+
+		if pushURL != "" && fetchURL != "" {
+			if upstreamRemote.PushURL != pushURL || upstreamRemote.FetchURL != fetchURL {
+				if err := upstreamRemote.UpdateURLs(ctx, fetchURL, pushURL); err != nil {
+					return err
+				}
+			}
+		} else {
+			klog.Warningf("cannot determine correct urls for %q", upstreamRemote.FetchURL)
 		}
 	}
 
