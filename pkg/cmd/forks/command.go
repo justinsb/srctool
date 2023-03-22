@@ -47,7 +47,10 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 
-	githubUsername := os.Getenv("USER")
+	githubUsername := os.Getenv("GITHUB_USER")
+	if githubUsername == "" {
+		githubUsername = os.Getenv("USER")
+	}
 
 	forkRemoteName := config.Get("gitflow.fork.remote")
 	if forkRemoteName == "" {
@@ -66,10 +69,10 @@ func Run(ctx context.Context, opt Options) error {
 
 		if len(candidates) == 0 {
 			// TODO: Call gh repo fork?
-			return fmt.Errorf("unable to find local fork")
+			return fmt.Errorf("found no candidates for your fork (username %q)", githubUsername)
 		}
 		if len(candidates) > 1 {
-			return fmt.Errorf("found multiple local forks")
+			return fmt.Errorf("found multiple candidates for your fork (username %q): %v", githubUsername, Map(candidates, func(r *git.Remote) string{ return r.Name }))
 		}
 
 		forkRemote := candidates[0]
@@ -182,4 +185,12 @@ func Run(ctx context.Context, opt Options) error {
 	}
 
 	return nil
+}
+
+func Map[T any, T2 any](in []T, fn func(t T) T2) ([]T2) {
+	var out []T2
+	for _, t := range in {
+		out = append(out, fn(t))
+	}
+	return out
 }
