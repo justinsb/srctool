@@ -137,10 +137,10 @@ func Run(ctx context.Context, opt Options) error {
 		}
 
 		if len(candidates) == 0 {
-			return fmt.Errorf("unable to find upstream remote")
+			return fmt.Errorf("unable to find remote for upstream repo")
 		}
 		if len(candidates) > 1 {
-			return fmt.Errorf("found multiple upstream remotes")
+			return fmt.Errorf("found multiple potential remotes for upstream repo")
 		}
 
 		upstreamRemote := candidates[0]
