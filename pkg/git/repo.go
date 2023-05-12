@@ -266,6 +266,17 @@ func (r *Repo) FindUpstreamBranch(ctx context.Context) (*Branch, error) {
 		return nil, err
 	}
 
+	config, err := r.ListConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error getting repo config: %w", err)
+	}
+
+	key := "gitflow.upstream.branch"
+	configValue := config.Get(key)
+	if configValue != "" {
+		return upstreamRemote.GetBranch(ctx, configValue)
+	}
+
 	branches, err := upstreamRemote.ListBranches(ctx)
 	if err != nil {
 		return nil, err
@@ -292,7 +303,7 @@ func (r *Repo) FindUpstreamBranch(ctx context.Context) (*Branch, error) {
 		return candidates[0], nil
 	}
 	names := collect(candidates, func(b *Branch) string { return b.Name })
-	return nil, fmt.Errorf("cannot determine unique upstream branch (candidates: %v)", strings.Join(names, ","))
+	return nil, fmt.Errorf("cannot determine unique upstream branch - consider setting gitflow.upstream.branch (candidates: %v)", strings.Join(names, ","))
 }
 
 func collect[T any, V any](items []T, mapper func(t T) V) []V {

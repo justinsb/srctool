@@ -64,6 +64,21 @@ func (r *Remote) ListBranches(ctx context.Context) ([]*Branch, error) {
 	return branches, nil
 }
 
+func (r *Remote) GetBranch(ctx context.Context, shortName string) (*Branch, error) {
+	// log := klog.FromContext(ctx)
+
+	branches, err := r.ListBranches(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, branch := range branches {
+		if branch.ShortName == shortName {
+			return branch, nil
+		}
+	}
+	return nil, fmt.Errorf("unable to find branch with name %q", shortName)
+}
+
 func (r *Remote) Fetch(ctx context.Context) error {
 	repo := r.repo
 	result, err := repo.ExecGit(ctx, "fetch", r.Name)
