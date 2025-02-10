@@ -18,6 +18,7 @@ func AddCommand(ctx context.Context, parent *cobra.Command) {
 	var opt Options
 	opt.InitDefaults()
 
+	cmd.Flags().BoolVar(&opt.PushWithSSH, "push-with-ssh", opt.PushWithSSH, "configure forks to use SSH when pushing")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return Run(cmd.Context(), opt)
 	}
@@ -25,6 +26,8 @@ func AddCommand(ctx context.Context, parent *cobra.Command) {
 }
 
 type Options struct {
+	// PushWithSSH controls whether we will rewrite the upstream to use SSH, when the remote is our own fork
+	PushWithSSH bool
 }
 
 func (o *Options) InitDefaults() {
@@ -72,7 +75,7 @@ func Run(ctx context.Context, opt Options) error {
 			return fmt.Errorf("found no candidates for your fork (username %q)", githubUsername)
 		}
 		if len(candidates) > 1 {
-			return fmt.Errorf("found multiple candidates for your fork (username %q): %v", githubUsername, Map(candidates, func(r *git.Remote) string{ return r.Name }))
+			return fmt.Errorf("found multiple candidates for your fork (username %q): %v", githubUsername, Map(candidates, func(r *git.Remote) string { return r.Name }))
 		}
 
 		forkRemote := candidates[0]
@@ -106,7 +109,7 @@ func Run(ctx context.Context, opt Options) error {
 
 		switch repoInfo := repoInfo.(type) {
 		case *git.GithubForgeInfo:
-			if repoInfo.Organization == githubUsername {
+			if opt.PushWithSSH && repoInfo.Organization == githubUsername {
 				pushURL = "git@github.com:" + repoInfo.Organization + "/" + repoInfo.Repository
 				fetchURL = "https://github.com/" + repoInfo.Organization + "/" + repoInfo.Repository
 			}
@@ -187,7 +190,7 @@ func Run(ctx context.Context, opt Options) error {
 	return nil
 }
 
-func Map[T any, T2 any](in []T, fn func(t T) T2) ([]T2) {
+func Map[T any, T2 any](in []T, fn func(t T) T2) []T2 {
 	var out []T2
 	for _, t := range in {
 		out = append(out, fn(t))
