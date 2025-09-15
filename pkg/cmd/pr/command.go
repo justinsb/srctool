@@ -13,7 +13,8 @@ import (
 
 func AddCommand(ctx context.Context, parent *cobra.Command) {
 	cmd := &cobra.Command{
-		Use: "pr",
+		Use:   "pr",
+		Short: "Create a pull request",
 	}
 	var opt Options
 	opt.InitDefaults()

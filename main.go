@@ -16,6 +16,7 @@ import (
 	"github.com/justinsb/gitflow/pkg/cmd/rebase"
 	"github.com/justinsb/gitflow/pkg/cmd/toc"
 	"github.com/justinsb/gitflow/pkg/cmd/top"
+	"github.com/justinsb/gitflow/pkg/cmd/workspaces"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func Run(ctx context.Context) error {
 	pr.AddCommand(ctx, root)
 	forks.AddCommand(ctx, root)
 	cherry.AddCommand(ctx, root)
+	workspaces.AddCommand(ctx, root)
 
 	return root.ExecuteContext(ctx)
 }
