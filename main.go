@@ -14,6 +14,7 @@ import (
 	"github.com/justinsb/gitflow/pkg/cmd/pr"
 	"github.com/justinsb/gitflow/pkg/cmd/prune"
 	"github.com/justinsb/gitflow/pkg/cmd/rebase"
+	"github.com/justinsb/gitflow/pkg/cmd/stage"
 	"github.com/justinsb/gitflow/pkg/cmd/toc"
 	"github.com/justinsb/gitflow/pkg/cmd/top"
 	"github.com/justinsb/gitflow/pkg/cmd/workspaces"
@@ -46,6 +47,7 @@ func Run(ctx context.Context) error {
 	forks.AddCommand(ctx, root)
 	cherry.AddCommand(ctx, root)
 	workspaces.AddCommand(ctx, root)
+	stage.AddCommand(ctx, root)
 
 	return root.ExecuteContext(ctx)
 }
