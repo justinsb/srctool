@@ -2,6 +2,7 @@ package prune
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -63,39 +64,51 @@ func Run(ctx context.Context, opt Options) error {
 
 	fmt.Printf("checking for branches merged into any of %v\n", mapValues(releaseBranches))
 
-	var pruneBranches []string
+	pruneBranches := make(map[string]bool)
 
 	for _, releaseBranch := range releaseBranches {
-		result, err := repo.ExecGit(ctx, "branch", "--merged", releaseBranch.Name)
+		args := []string{"branch", "--merged", releaseBranch.Name}
+		result, err := repo.ExecGit(ctx, args...)
 		if err != nil {
 			return err
 		}
 		for _, line := range strings.Split(result.Stdout, "\n") {
 			tokens := strings.Fields(line)
+
+			branchName := ""
 			if len(tokens) == 0 {
 				// Ignore empty lines
+			} else if len(tokens) == 2 && tokens[0] == "+" {
+				// Checked out as worktree somewhere
+				branchName = tokens[1]
 			} else if len(tokens) == 2 && tokens[0] == "*" {
+				// Current branch
 				klog.Infof("skipping current branch %q", tokens[1])
 			} else if len(tokens) == 1 {
-				branchName := tokens[0]
+				branchName = tokens[0]
+			} else {
+				return fmt.Errorf("cannot interpret branch line %q (from command git %s)", line, strings.Join(args, " "))
+			}
+
+			if branchName != "" {
 				if _, found := releaseBranches[branchName]; found {
 					klog.Infof("won't delete release branch %q", branchName)
 				} else {
-					pruneBranches = append(pruneBranches, branchName)
+					pruneBranches[branchName] = true
 					klog.Infof("branch %q is merged into %q", branchName, releaseBranch.Name)
 				}
-			} else {
-				return fmt.Errorf("cannot interpret branch line %q", line)
 			}
 		}
 	}
 
 	if !opt.DryRun {
-		for _, pruneBranch := range pruneBranches {
+		var errs []error
+		for pruneBranch := range pruneBranches {
 			if err := repo.DeleteBranch(ctx, pruneBranch); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
+		return errors.Join(errs...)
 	}
 
 	return nil

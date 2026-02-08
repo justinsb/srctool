@@ -13,6 +13,12 @@ func (b *Branch) String() string {
 }
 
 func (r *Repo) DeleteBranch(ctx context.Context, branchName string) error {
-	_, err := r.ExecGit(ctx, "branch", "-D", branchName)
-	return err
+	result, err := r.ExecGit(ctx, "branch", "-D", branchName)
+	if err != nil {
+		if result.ExitCode != 0 {
+			result.PrintOutput()
+		}
+		return err
+	}
+	return nil
 }
